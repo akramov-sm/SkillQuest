@@ -1,0 +1,15 @@
+data/
+backups/
+__pycache__/
+*.pyc
+tests/
+docs/
+deploy/
+.git
+.env
+.env.*
+!.env.example
+secrets/
+*.md
+docker-compose.yml
+Dockerfile

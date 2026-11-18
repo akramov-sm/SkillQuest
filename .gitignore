@@ -1,0 +1,11 @@
+data/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+secrets/
+backups/
+*.before-restore-*
+.DS_Store
+.idea/

@@ -1,0 +1,81 @@
+# SkillQuest production stack:  caddy (HTTPS, public)  →  app (private)  +  backup (daily SQLite snapshots)
+#
+#   cp .env.example .env && chmod 600 .env     # then edit .env
+#   docker compose up -d --build
+#
+# Only Caddy publishes ports. The app is reachable solely through the internal network.
+# Secrets come from .env (gitignored) — none are baked into the image or this file.
+
+services:
+  app:
+    build: .
+    image: skillquest:latest
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+      SKILLQUEST_DB: /data/skillquest.db
+      SKILLQUEST_BASIC_AUTH: ${SKILLQUEST_BASIC_AUTH:?Set SKILLQUEST_BASIC_AUTH in .env (user:password)}
+      SKILLQUEST_ALLOWED_HOSTS: ${SKILLQUEST_DOMAIN:?Set SKILLQUEST_DOMAIN in .env}
+      SKILLQUEST_TRUST_PROXY: "1"        # Caddy overwrites X-Forwarded-For → per-client login lockout works
+    volumes:
+      - skillquest-data:/data
+    expose:
+      - "8000"
+    read_only: true                      # image filesystem is immutable; only /data (volume) and /tmp are writable
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+
+  backup:
+    image: skillquest:latest
+    depends_on:
+      - app
+    restart: unless-stopped
+    command: >
+      python -m backend.backup --db /data/skillquest.db --dir /backups
+      --keep ${BACKUP_KEEP:-14} --loop ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - skillquest-data:/data            # opened read-only by SQLite's backup API; needs rw mount only for WAL files
+      - skillquest-backups:/backups
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    healthcheck:
+      disable: true
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SKILLQUEST_DOMAIN: ${SKILLQUEST_DOMAIN:?Set SKILLQUEST_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data                 # TLS certificates — keep this volume
+      - caddy-config:/config
+
+# Explicit names: stable across project renames, easy to reference in backup/restore commands.
+volumes:
+  skillquest-data:
+    name: skillquest-data
+  skillquest-backups:
+    name: skillquest-backups
+  caddy-data:
+    name: skillquest-caddy-data
+  caddy-config:
+    name: skillquest-caddy-config
